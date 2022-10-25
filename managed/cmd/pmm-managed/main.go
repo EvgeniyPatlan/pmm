@@ -66,6 +66,7 @@ import (
 	rolev1beta1 "github.com/percona/pmm/api/managementpb/role"
 	"github.com/percona/pmm/api/platformpb"
 	"github.com/percona/pmm/api/serverpb"
+	"github.com/percona/pmm/api/uieventspb"
 	"github.com/percona/pmm/api/userpb"
 	"github.com/percona/pmm/managed/models"
 	"github.com/percona/pmm/managed/services/agents"
@@ -92,6 +93,7 @@ import (
 	"github.com/percona/pmm/managed/services/server"
 	"github.com/percona/pmm/managed/services/supervisord"
 	"github.com/percona/pmm/managed/services/telemetry"
+	"github.com/percona/pmm/managed/services/uievents"
 	"github.com/percona/pmm/managed/services/user"
 	"github.com/percona/pmm/managed/services/versioncache"
 	"github.com/percona/pmm/managed/services/victoriametrics"
@@ -202,6 +204,7 @@ type gRPCServerDeps struct {
 	componentsService    *managementdbaas.ComponentsService
 	dbaasInitializer     *managementdbaas.Initializer
 	agentService         *agents.AgentService
+	uieventsService      *uievents.Service
 }
 
 type gRPCServerFeatures struct {
@@ -292,6 +295,12 @@ func runGRPCServer(ctx context.Context, deps *gRPCServerDeps, features gRPCServe
 		platformpb.RegisterPlatformServer(gRPCServer, platformService)
 	} else {
 		l.Fatalf("Failed to register platform service: %s", err.Error())
+	}
+
+	if err == nil {
+		uieventspb.RegisterUIEventsServer(gRPCServer, deps.uieventsService)
+	} else {
+		l.Fatalf("Failed to register UI events service: %s", err.Error())
 	}
 
 	if l.Logger.GetLevel() >= logrus.DebugLevel {
@@ -415,6 +424,7 @@ func runHTTP1Server(ctx context.Context, deps *http1ServerDeps) {
 		dbaasv1beta1.RegisterComponentsHandlerFromEndpoint,
 
 		platformpb.RegisterPlatformHandlerFromEndpoint,
+		uieventspb.RegisterUIEventsHandlerFromEndpoint,
 
 		userpb.RegisterUserHandlerFromEndpoint,
 	} {
@@ -781,7 +791,17 @@ func main() {
 		l.Fatalf("Could not create Percona Portal client: %s", err)
 	}
 
-	telemetry, err := telemetry.NewService(db, platformClient, version.Version, cfg.Config.Services.Telemetry)
+	uieventsService, err := uievents.New()
+	if err != nil {
+		l.Fatalf("Could not create UI Events Service: %s", err)
+	}
+	uieventsService.ScheduleCleanup(ctx)
+
+	telemetryExtensions := map[telemetry.ExtensionType]telemetry.Extension{
+		telemetry.UIEventsExtension: uieventsService,
+	}
+
+	telemetry, err := telemetry.NewService(db, platformClient, version.Version, cfg.Config.Services.Telemetry, telemetryExtensions)
 	if err != nil {
 		l.Fatalf("Could not create telemetry service: %s", err)
 	}
@@ -1015,6 +1035,7 @@ func main() {
 				componentsService:    componentsService,
 				dbaasInitializer:     dbaasInitializer,
 				agentService:         agentService,
+				uieventsService:      uieventsService,
 			}, gRPCServerFeatures{
 				enableAccessControl: *enableAccessControl,
 			})

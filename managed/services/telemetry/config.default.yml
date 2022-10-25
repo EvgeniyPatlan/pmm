@@ -682,3 +682,8 @@ telemetry:
       - metric_name: "pillar"
         column: "pillar"
       - metric_name: "count"
+
+  # UI Events
+  - id: UIEvents
+    summary: "UI Events"
+    extension: UIEventsExtension
